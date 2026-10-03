@@ -197,38 +197,39 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
-def extract_k4(node):
+def find_k4_value(node):
     if isinstance(node, dict):
         if 'k4' in node:
             return node['k4']
         for value in node.values():
-            result = extract_k4(value)
+            result = find_k4_value(value)
             if result is not None:
                 return result
     elif isinstance(node, (list, tuple)):
         for item in node:
-            result = extract_k4(item)
+            result = find_k4_value(item)
             if result is not None:
                 return result
     return None
 
 
 def decode_payload(payload):
+    if payload is None:
+        raise ValueError('Empty payload')
     if isinstance(payload, bytes):
         raw = payload
     else:
         raw = str(payload).strip().encode('utf-8')
 
-    candidates = [raw, raw.replace(b'-', b'+').replace(b'_', b'/')]
-    decoded = None
+    candidates = [raw]
+    candidates.append(raw.replace(b'-', b'+').replace(b'_', b'/'))
     for candidate in candidates:
         padded = candidate + b'=' * ((4 - len(candidate) % 4) % 4)
         try:
             decoded = base64.b64decode(padded, validate=False)
             break
         except Exception:
-            pass
-
+            decoded = None
     if decoded is None:
         raise ValueError('Could not decode the GMD payload as base64')
 
@@ -245,26 +246,36 @@ def decode_payload(payload):
 
     raise ValueError('Could not decompress or decode the GMD payload')
 
+text = Path('/level.gmd').read_text(encoding='utf-8', errors='ignore')
+if '<plist' not in text.lower() and '<?xml' not in text.lower():
+    raise ValueError('Not a GMD/XML plist file')
 
-data = Path('/level.gmd').read_bytes()
 encoded = None
 
-for parser in (plistlib.loads, lambda b: ET.fromstring(b)):
+try:
+    root = plistlib.loads(text.encode('utf-8'))
+    encoded = find_k4_value(root)
+except Exception:
+    encoded = None
+
+if encoded is None:
     try:
-        parsed = parser(data)
-        encoded = extract_k4(parsed)
-        if encoded is not None:
-            break
+        root = ET.fromstring(text)
+        children = list(root.iter())
+        for i, node in enumerate(children):
+            if node.tag == 'k' and node.text == 'k4':
+                for j in range(i + 1, len(children)):
+                    nxt = children[j]
+                    if nxt.tag in {'k', 'key'}:
+                        break
+                    if nxt.tag in {'s', 'string', 'data'}:
+                        encoded = nxt.text
+                        break
+                break
     except Exception:
-        pass
+        encoded = None
 
-if encoded is None:
-    text = data.decode('utf-8', 'ignore')
-    match = re.search(r'<key>\s*k4\s*</key>\s*(?:<string>|<data>)\s*([^<]+)\s*(?:</string>|</data>)', text, re.I | re.S)
-    if match:
-        encoded = match.group(1)
-
-if encoded is None:
+if not encoded:
     raise ValueError('k4 key not found in GMD file')
 
 levelData = decode_payload(encoded)
