@@ -183,46 +183,49 @@
                 await micropip.install('gdparse');
 
                 logLine('Reading file...');
-                const buffer = await gmd.arrayBuffer();
-                const text = new TextDecoder().decode(buffer);
-                
-                logLine('Extracting k4 payload...');
-                
+                const fileText = new TextDecoder().decode(await gmd.arrayBuffer());
+
+                logLine('Parsing GMD plist payload...');
                 pyodide.runPython(`
 import base64
 import gzip
-import re
+import json
 import zlib
+import xml.etree.ElementTree as ET
 
-gmd_text = """${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"""
-
-if '<plist' not in gmd_text.lower():
-    raise ValueError('Not a valid GMD plist file')
-
+gmd_text = json.loads(${JSON.stringify(fileText)})
+root = ET.fromstring(gmd_text)
+items = list(root.iter())
 encoded = None
-match = re.search(r'<k>k4</k>\\s*<s>([^<]+)</s>', gmd_text)
-if match:
-    encoded = match.group(1).strip()
+
+for i, child in enumerate(items):
+    if child.tag == 'k' and child.text == 'k4':
+        for j in range(i + 1, len(items)):
+            value = items[j]
+            if value.tag in {'s', 'string', 'data'} and value.text is not None:
+                encoded = value.text.strip()
+                break
+        break
 
 if not encoded:
-    raise ValueError('Could not find k4 payload in GMD file')
+    raise ValueError('k4 key not found in GMD file')
 
-logfile = open('/tmp/debug.log', 'w')
-logfile.write(f'Found encoded payload of length: {len(encoded)}\\n')
-logfile.close()
+encoded = encoded.replace('-', '+').replace('_', '/')
+encoded += '=' * (-len(encoded) % 4)
+raw = base64.b64decode(encoded)
 
-def decode_payload(payload):
-    raw = base64.b64decode(payload)
-    for decoder in (gzip.decompress, zlib.decompress):
-        try:
-            return decoder(raw).decode('utf-8')
-        except Exception:
-            pass
-    raise ValueError('Could not decompress payload')
+for decoder in (gzip.decompress, zlib.decompress):
+    try:
+        decompressed = decoder(raw).decode('utf-8')
+        break
+    except Exception:
+        decompressed = None
 
-levelData = decode_payload(encoded)
+if decompressed is None:
+    raise ValueError('Could not decompress k4 payload')
+
 output = []
-for item in levelData.split(';'):
+for item in decompressed.split(';'):
     if not item:
         continue
     parts = item.split(',')
