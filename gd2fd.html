@@ -34,6 +34,7 @@
         const log = document.getElementById('log');
         const gmdUpload = document.getElementById('gmdUpload');
         const a = document.getElementById('downloader');
+        const fileInput = gid('fileLoad');
 
         function logLine(s = '') { log.textContent += s + '\n'; console.log(s)};
         function setProgress(x) {
@@ -52,14 +53,20 @@
         document.addEventListener('drop', async (e) => {
             e.preventDefault();
             let droppedFile = e.dataTransfer.files[0];
-            if (droppedFile.name.endsWith('.gmd')) {
+            if (droppedFile && droppedFile.name.endsWith('.gmd')) {
                 gmd = droppedFile;
                 await buildMain();
             };
         });
-        document.addEventListener('click', ()=>{gid('fileLoad').click()});
-        gid('fileLoad').addEventListener('change', async (e)=>{
-            gmd = e.srcElement.files[0];
+        document.addEventListener('click', (event) => {
+            if (event.target === document.body || event.target === document.body.firstElementChild) {
+                fileInput.click();
+            }
+        });
+        fileInput.addEventListener('change', async (e)=>{
+            const selectedFile = e.target && e.target.files ? e.target.files[0] : null;
+            if (!selectedFile) return;
+            gmd = selectedFile;
             await buildMain();
         })
 
@@ -72,7 +79,7 @@
                     spriteData = `${spriteData}\n${spriteGrid[y].map((x)=>(x==-1)?0:x+257).join(',')},`;
                 };
                 let output = `<?xml version="1.0" encoding="UTF-8"?>
-    <map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="${gridSize[0]}" height="${gridSize[1]}" tilewidth="16" tileheight="16" infinite="0" nextlayerid="5" nextobjectid="1">
+    <map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="${gridSize[0]}" height="${gridSize[1]}" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="1">
     <editorsettings>
     <chunksize width="16" height="27"/>
     <export target="stereomadness.csv" format="csv"/>
@@ -100,16 +107,23 @@
     </data>
     </layer>
     </map>`;
-            
-                const url = URL.createObjectURL(new Blob([output], { 'text/xml': ['.tmx'] }));
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                a.download = 'level.tmx';
-                a.click();
-                URL.revokeObjectURL(url);
+
+                const blob = new Blob([output], { type: 'application/xml' });
+                const url = URL.createObjectURL(blob);
+                const downloadLink = document.createElement('a');
+                downloadLink.style.display = 'none';
+                downloadLink.href = url;
+                downloadLink.download = 'level.tmx';
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                downloadLink.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
             };
 
+            if (!gmd) {
+                console.warn('No GMD file selected');
+                return;
+            }
 
             setProgress(0);
             logLine('Loading pyodide...');
