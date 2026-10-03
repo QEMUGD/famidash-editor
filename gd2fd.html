@@ -247,38 +247,64 @@ import gzip, base64, time, zlib
 
 try:
     root = ET.parse('/level.gmd').getroot()
+    levelData = None
     values = {}
-    children = list(root)
     
-    # Try parsing as standard plist format
-    try:
-        for i in range(0, len(children), 2):
-            key = children[i].text
-            value = children[i + 1].text
-            if key and value:
-                values[key] = value
-        
-        if "k4" in values:
-            levelData = gzip.decompress(base64.urlsafe_b64decode(values["k4"])).decode("utf-8")
-        else:
-            raise ValueError("k4 key not found in standard format")
-    except (IndexError, ValueError, gzip.BadGzipFile):
-        # Try alternate plist format (dict-based)
-        elements = list(root.find("dict"))
-        for i, element in enumerate(elements):
-            if element.tag == "k" and element.text == "k4":
-                if i + 1 < len(elements):
-                    value = elements[i + 1].text
-                    if value:
-                        try:
-                            # Try zlib decompression first
-                            levelData = zlib.decompress(base64.urlsafe_b64decode(value)).decode('utf-8')
-                        except:
-                            # Try gzip decompression
-                            levelData = gzip.decompress(base64.urlsafe_b64decode(value)).decode('utf-8')
+    # Try method 1: Standard plist key-value format
+    children = list(root)
+    if len(children) >= 2:
+        try:
+            for i in range(0, len(children), 2):
+                key = children[i].text
+                value = children[i + 1].text
+                if key and value:
+                    values[key] = value
+            
+            if "k4" in values:
+                encoded = values["k4"]
+                # Try gzip first
+                try:
+                    levelData = gzip.decompress(base64.urlsafe_b64decode(encoded)).decode("utf-8")
+                except:
+                    # Try zlib
+                    levelData = zlib.decompress(base64.urlsafe_b64decode(encoded)).decode('utf-8')
+        except:
+            pass
+    
+    # Try method 2: dict-based plist format
+    if levelData is None:
+        root_dict = root.find("dict")
+        if root_dict is not None:
+            elements = list(root_dict)
+            for i, element in enumerate(elements):
+                if element.tag == "k" and element.text == "k4":
+                    if i + 1 < len(elements):
+                        value = elements[i + 1].text
+                        if value:
+                            try:
+                                # Try gzip first
+                                levelData = gzip.decompress(base64.urlsafe_b64decode(value)).decode("utf-8")
+                            except:
+                                # Try zlib
+                                levelData = zlib.decompress(base64.urlsafe_b64decode(value)).decode('utf-8')
+                        break
+    
+    # Try method 3: Check root itself for k4 key
+    if levelData is None:
+        for elem in root:
+            if elem.tag == "k" and elem.text == "k4":
+                # Find next string element
+                next_elem = elem.getnext()
+                if next_elem is not None and next_elem.text:
+                    value = next_elem.text
+                    try:
+                        levelData = gzip.decompress(base64.urlsafe_b64decode(value)).decode("utf-8")
+                    except:
+                        levelData = zlib.decompress(base64.urlsafe_b64decode(value)).decode('utf-8')
                     break
-        else:
-            raise ValueError("Could not find k4 key in plist")
+    
+    if levelData is None:
+        raise RuntimeError("Could not find or decompress k4 key in plist")
 
 except Exception as e:
     raise RuntimeError(f"Failed to parse GMD file: {str(e)}")
