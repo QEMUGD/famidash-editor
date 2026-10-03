@@ -185,31 +185,19 @@
                 logLine('Reading file...');
                 const fileText = new TextDecoder().decode(await gmd.arrayBuffer());
 
-                logLine('Parsing GMD plist payload...');
+                logLine('Parsing level payload from k4...');
                 pyodide.runPython(`
 import base64
 import gzip
-import json
+import re
 import zlib
-import xml.etree.ElementTree as ET
 
-gmd_text = json.loads(${JSON.stringify(fileText)})
-root = ET.fromstring(gmd_text)
-items = list(root.iter())
-encoded = None
-
-for i, child in enumerate(items):
-    if child.tag == 'k' and child.text == 'k4':
-        for j in range(i + 1, len(items)):
-            value = items[j]
-            if value.tag in {'s', 'string', 'data'} and value.text is not None:
-                encoded = value.text.strip()
-                break
-        break
-
-if not encoded:
+text = ${JSON.stringify(fileText)}
+match = re.search(r'<k>\\s*k4\\s*</k>\\s*<s>(.*?)</s>', text, re.S)
+if not match:
     raise ValueError('k4 key not found in GMD file')
 
+encoded = match.group(1).strip()
 encoded = encoded.replace('-', '+').replace('_', '/')
 encoded += '=' * (-len(encoded) % 4)
 raw = base64.b64decode(encoded)
@@ -222,7 +210,7 @@ for decoder in (gzip.decompress, zlib.decompress):
         decompressed = None
 
 if decompressed is None:
-    raise ValueError('Could not decompress k4 payload')
+    raise ValueError('Could not decompress GMD payload')
 
 output = []
 for item in decompressed.split(';'):
